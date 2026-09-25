@@ -1,0 +1,5 @@
+__pycache__/
+backup/
+config.json
+*.pyc
+pkgs/
