@@ -1,9 +1,9 @@
-# 明日方舟 PC 客户端 BGM 替换技术文档
+# 明日方舟 BGM 替换技术文档（Windows PC / macOS PlayCover）
 
 > 项目：将主界面「扬升」主题背景音乐（Aria of the Soul）替换为自定义曲目
-> 平台：Windows / Unity 2021.3.39f1 / IL2CPP
+> 平台：Windows PC 客户端 / macOS PlayCover（iOS 客户端）· Unity 2021.3.39f1 / IL2CPP
 > 目标文件：`audio/sound_beta_2/music/act54side/m_sys_act54side_mainpage.ab`
-> 文档版本：2026-09-11
+> 文档版本：2026-09-28（新增第 11 节 macOS PlayCover 适配）
 
 ---
 
@@ -19,6 +19,7 @@
 8. [更新对修改的影响与恢复](#8-更新影响)
 9. [工具清单与使用说明](#9-工具清单)
 10. [扩展方向](#10-扩展方向)
+11. [macOS PlayCover 适配](#11-macos-playcover-适配)
 
 ---
 
@@ -300,6 +301,49 @@ FSB5-PCM16 容器（60B 头 + 8B 采样头 + PCM 数据）
 
 ---
 
+## 11. macOS PlayCover 适配（2026-09-28）
+
+### 11.1 资源位置差异
+
+iOS 客户端（PlayCover 安装的国服 ipa）的目标文件**不在 .app 基础包**内
+（`明日方舟.app/Data/Raw/AB/IOS/hot_update_list.json` 仅 3179 条基础条目，无 act54side 音频），
+只存在于热更层：
+
+```
+~/Library/Containers/com.hypergryph.arknights/Data/Documents/Bundles/
+  ├── hot_update_list.json          ← 15217 条（含 .idx 分包索引）
+  ├── persistent_res_list.json      ← 11375 条
+  └── audio/sound_beta_2/music/act54side/m_sys_act54side_mainpage.ab
+```
+
+工具的「游戏目录」在该平台即指此 `Bundles` 目录（留空时自动检测上述默认容器路径）。
+
+### 11.2 双清单与字段语义差异（400 条抽样实测验证）
+
+| 字段 | Windows | iOS (PlayCover) |
+|---|---|---|
+| 登记清单 | 仅 `hot_update_list.json` | `hot_update_list.json` + `persistent_res_list.json` **双清单，两份都要同步** |
+| `md5` | = 文件 MD5 | = 文件 MD5（相同）→ 替换后同步 |
+| `abSize` | = 文件大小 | = 文件大小（400/400 抽样一致）→ 替换后同步 |
+| `totalSize` | = 文件大小 | 恒 ≠ 磁盘大小（下载记账值）→ **保持不动** |
+| `hash` | 版本指纹 | 版本指纹 → **保持不动** |
+
+### 11.3 bundle 本体：与 Windows 完全同构
+
+实测解析 iOS 端目标 bundle：`version=8 / flags=0x243 / 同名 CAB-909b7688... /
+双节点布局 / AudioClip 165.652s Vorbis`——与 3.3 节 Windows 端结构逐字段一致。
+因此 FSB5-PCM16 构建、CAB 补丁、UnityFS 重打包整条链路**零改动直接复用**
+（CAB 重序列化同样缩短 784B）；LZ4AK 私有压缩变体在两端同样存在，`akparse` 均可解。
+
+### 11.4 环境与验证
+
+- Homebrew Python 的 tkinter 独立打包：`brew install python-tk@<小版本>`（venv 前的必备步骤）
+- 音频转换可用系统自带 `afconvert` 替代 ffmpeg：`afconvert -f WAVE -d LEI16@44100 -c 2 in.mp3 out.wav`
+- 2026-09-27 实测（macOS + PlayCover，替换为 227.2s PCM 曲目）：容器往返、AudioClip 回读、
+  PCM 逐字节比对（40085248 B 全等）、双清单 md5/abSize 一致性、原版备份 md5 校验全部通过
+
+---
+
 ## 附：关键逆向数据速查
 
 ```
@@ -310,6 +354,11 @@ resource 节点: CAB-909b7688d37e27bfc183311aadaf6651.resource (1962752 B)
 AudioClip:    path_id=4457544689111580993, m_Name=m_sys_act54side_mainpage_loop
 原音频:       FSB5/Vorbis, 44100Hz, 2ch, 165.652s, 7305261 帧
 bundle flags: 0x243 (blocksInfo=LZ4HC, combined, aligned)
+
+iOS (PlayCover) 端:
+官方 md5:     d9de3a69a27da4e56eaf2add4daa5f57 (1965126 B, totalSize=1931939)
+所在位置:     ~/Library/Containers/com.hypergryph.arknights/Data/Documents/Bundles/
+              (不在 .app 基础包内; 双清单登记, 见第 11 节)
 ```
 
 > **2026-09 更新附注（本文档写作后游戏已更新）**：2026-09-18 前后官方更新把该文件并入基础包并替换为完整版 PCM：
