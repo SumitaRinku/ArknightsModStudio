@@ -12,6 +12,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+IS_MAC = sys.platform == 'darwin'
+FONT_UI  = ('PingFang SC', 12) if IS_MAC else ('Microsoft YaHei UI', 9, 'bold')
+FONT_LOG = ('Menlo', 11) if IS_MAC else ('Consolas', 9)
 
 
 def load_config():
@@ -41,7 +44,7 @@ class App(tk.Tk):
         pad = dict(pady=4)
 
         # 游戏目录
-        frm_game = ttk.LabelFrame(self, text='游戏目录 (明日方舟 PC 客户端根目录)', padding=6)
+        frm_game = ttk.LabelFrame(self, text='游戏目录 (Windows: PC客户端根目录 / macOS: PlayCover Bundles目录, 可留空自动检测)', padding=6)
         frm_game.pack(fill='x', padx=14, pady=(10, 2))
         self.var_game = tk.StringVar(value=self.cfg.get('game_dir', ''))
         ttk.Entry(frm_game, textvariable=self.var_game).pack(side='left', fill='x', expand=True, padx=(0, 6))
@@ -59,8 +62,7 @@ class App(tk.Tk):
         self.var_status = tk.StringVar(value='')
         frm_status = ttk.Frame(self)
         frm_status.pack(fill='x', padx=14, **pad)
-        ttk.Label(frm_status, textvariable=self.var_status,
-                  font=('Microsoft YaHei UI', 9, 'bold')).pack(anchor='w')
+        ttk.Label(frm_status, textvariable=self.var_status, font=FONT_UI).pack(anchor='w')
 
         # 按钮区
         frm_btn = ttk.Frame(self)
@@ -75,7 +77,7 @@ class App(tk.Tk):
         frm_log.pack(fill='both', expand=True, padx=14, pady=(4, 12))
         sb = ttk.Scrollbar(frm_log)
         sb.pack(side='right', fill='y')
-        self.txt = tk.Text(frm_log, height=10, width=78, font=('Consolas', 9),
+        self.txt = tk.Text(frm_log, height=10, width=78, font=FONT_LOG,
                            state='disabled', yscrollcommand=sb.set)
         self.txt.pack(side='left', fill='both', expand=True)
         sb.config(command=self.txt.yview)
@@ -91,7 +93,7 @@ class App(tk.Tk):
 
     # ---------- 事件 ----------
     def on_pick_game(self):
-        d = filedialog.askdirectory(title='选择明日方舟 PC 客户端根目录')
+        d = filedialog.askdirectory(title='选择游戏目录 (Windows: 客户端根目录 / macOS: Bundles 热更目录)')
         if d:
             self.var_game.set(os.path.normpath(d))
             self.cfg['game_dir'] = self.var_game.get()
@@ -133,7 +135,7 @@ class App(tk.Tk):
     def on_apply(self):
         game = self.var_game.get().strip()
         wav = self.var_wav.get().strip()
-        if not game:
+        if not game and not IS_MAC:
             messagebox.showerror('错误', '请先选择游戏根目录')
             return
         if not wav or not os.path.exists(wav):
@@ -144,7 +146,7 @@ class App(tk.Tk):
 
     def on_restore(self):
         game = self.var_game.get().strip()
-        if not game:
+        if not game and not IS_MAC:
             messagebox.showerror('错误', '请先选择游戏根目录')
             return
         self.log('==== 还原官方原版 ====')

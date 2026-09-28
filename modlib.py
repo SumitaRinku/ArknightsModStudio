@@ -17,23 +17,49 @@ import lz4.block
 import UnityPy
 from akparse import parse
 
-# ============ 目标资源 (相对游戏根目录) ============
-REL_AB   = r'Arknights_Data\StreamingAssets\AB\Windows\audio\sound_beta_2\music\act54side\m_sys_act54side_mainpage.ab'
-REL_LIST = r'Arknights_Data\StreamingAssets\AB\Windows\hot_update_list.json'
+# ============ 目标资源 ============
+# Windows PC 客户端: 游戏根目录 = 含 Arknights_Data 的那一层
+REL_AB_WIN = os.path.join('Arknights_Data', 'StreamingAssets', 'AB', 'Windows',
+                          'audio', 'sound_beta_2', 'music', 'act54side', 'm_sys_act54side_mainpage.ab')
+REL_LIST_WIN = os.path.join('Arknights_Data', 'StreamingAssets', 'AB', 'Windows', 'hot_update_list.json')
+# macOS PlayCover (iOS 客户端): 游戏根目录 = 热更资源目录 .../Data/Documents/Bundles
+# (国服官方包 com.hypergryph.arknights; 目标 .ab 只存在于热更层, 不在 .app 基础包内)
+MAC_DEFAULT_BASE = os.path.expanduser('~/Library/Containers/com.hypergryph.arknights/Data/Documents/Bundles')
+REL_AB_MAC = 'audio/sound_beta_2/music/act54side/m_sys_act54side_mainpage.ab'
+MAC_LISTS = ['hot_update_list.json', 'persistent_res_list.json']
 ENTRY      = 'audio/sound_beta_2/music/act54side/m_sys_act54side_mainpage.ab'   # 清单中的键
 CLIP_NAME  = 'm_sys_act54side_mainpage_loop'                                    # AudioClip 名称
 BACKUP_DIR = os.path.join(_HERE, 'backup')
 
 
 def resolve_paths(base):
-    """校验游戏根目录并返回 ab / 清单路径。"""
+    """识别 Windows / macOS(PlayCover) 两种布局, 返回 ab 路径与清单文件列表。
+
+    - Windows: base 为 PC 客户端根目录 (含 Arknights_Data), 清单 totalSize == 文件大小
+    - macOS:   base 为 Bundles 热更目录; 条目同时登记在两份清单中,
+                且 totalSize 为下载记账值 (实测恒 != 磁盘大小), 只同步 md5/abSize
+    - macOS 下 base 留空时自动使用 PlayCover 默认容器路径
+    """
     base = (base or '').rstrip('\\/')
-    ab = os.path.join(base, REL_AB)
-    if not base or not os.path.isfile(ab):
+    if not base and sys.platform == 'darwin':
+        base = MAC_DEFAULT_BASE
+    if base and os.path.isdir(os.path.join(base, 'Arknights_Data')):
+        ab = os.path.join(base, REL_AB_WIN)
+        lists = [os.path.join(base, REL_LIST_WIN)]
+        total_eq_size = True
+    elif base and all(os.path.isfile(os.path.join(base, f)) for f in MAC_LISTS):
+        ab = os.path.join(base, *REL_AB_MAC.split('/'))
+        lists = [os.path.join(base, f) for f in MAC_LISTS]
+        total_eq_size = False
+    else:
         raise RuntimeError(
-            '未找到游戏资源文件, 请确认选择的是明日方舟 PC 客户端根目录\n'
-            '(应包含 Arknights_Data\\StreamingAssets 子目录):\n%s' % base)
-    return dict(base=base, ab=ab, list=os.path.join(base, REL_LIST))
+            '无法识别游戏目录:\n%s\n'
+            'Windows: 传入 PC 客户端根目录 (含 Arknights_Data\\StreamingAssets)\n'
+            'macOS:   传入 PlayCover 的 .../Data/Documents/Bundles 目录, '
+            '或留空自动检测 (国服 com.hypergryph.arknights)' % (base or '(空)'))
+    if not os.path.isfile(ab):
+        raise RuntimeError('未找到游戏资源文件 (可能尚未下载该资源):\n%s' % ab)
+    return dict(base=base, ab=ab, lists=lists, total_eq_size=total_eq_size)
 
 
 # ============ 1. WAV 读取 ============
@@ -165,47 +191,55 @@ def apply_song(wav_path, game_dir, log=print):
     log('[3/4] 重打包 bundle: %d 字节 (原 %d)' % (len(new_ab), os.path.getsize(p['ab'])))
 
     # 备份官方原版 (仅首次)
-    ab_bak  = os.path.join(BACKUP_DIR, 'm_sys_act54side_mainpage.ab.bak')
-    lst_bak = os.path.join(BACKUP_DIR, 'hot_update_list.json.bak')
+    ab_bak = os.path.join(BACKUP_DIR, 'm_sys_act54side_mainpage.ab.bak')
     os.makedirs(BACKUP_DIR, exist_ok=True)
     if not os.path.exists(ab_bak):
         shutil.copy2(p['ab'], ab_bak)
-        shutil.copy2(p['list'], lst_bak)
+        for lp in p['lists']:
+            shutil.copy2(lp, os.path.join(BACKUP_DIR, os.path.basename(lp) + '.bak'))
         log('      已备份官方原版 -> ' + BACKUP_DIR)
 
     with open(p['ab'], 'wb') as f:
         f.write(new_ab)
     md5 = hashlib.md5(new_ab).hexdigest()
 
-    j = json.load(open(p['list'], encoding='utf-8'))
-    hit = False
-    for it in j['abInfos']:
-        if it.get('name') == ENTRY:
-            it['md5'] = md5
-            it['totalSize'] = len(new_ab)
-            it['abSize'] = len(new_ab)
-            hit = True
-    if not hit:
-        raise RuntimeError('清单中未找到条目: ' + ENTRY)
-    with open(p['list'], 'w', encoding='utf-8', newline='') as f:
-        f.write(json.dumps(j, separators=(',', ':'), ensure_ascii=False))
-    log('[4/4] 已写入游戏文件并同步 hot_update_list.json (md5=%s)' % md5)
+    # 同步清单 (macOS PlayCover 下条目同时登记于 hot_update_list 与 persistent_res_list)
+    for lp in p['lists']:
+        j = json.load(open(lp, encoding='utf-8'))
+        hit = False
+        for it in j['abInfos']:
+            if it.get('name') == ENTRY:
+                it['md5'] = md5
+                it['abSize'] = len(new_ab)
+                if p['total_eq_size']:      # Windows: totalSize == 文件大小; iOS: 保留下载记账值
+                    it['totalSize'] = len(new_ab)
+                hit = True
+        if not hit:
+            raise RuntimeError('清单 %s 中未找到条目: %s' % (os.path.basename(lp), ENTRY))
+        with open(lp, 'w', encoding='utf-8', newline='') as f:
+            f.write(json.dumps(j, separators=(',', ':'), ensure_ascii=False))
+        log('      清单已同步: %s' % os.path.basename(lp))
+    log('[4/4] 已写入游戏文件并同步清单 (md5=%s)' % md5)
     log('完成! 启动游戏后在主界面切换「扬升」主题即可生效。')
     return md5
 
 
 # ============ 7. 还原官方原版 ============
 def restore(game_dir, log=print):
-    """从备份还原官方 .ab 与 hot_update_list.json"""
+    """从备份还原官方 .ab 与各清单文件"""
     p = resolve_paths(game_dir)
-    ab_bak  = os.path.join(BACKUP_DIR, 'm_sys_act54side_mainpage.ab.bak')
-    lst_bak = os.path.join(BACKUP_DIR, 'hot_update_list.json.bak')
-    if not (os.path.exists(ab_bak) and os.path.exists(lst_bak)):
+    ab_bak = os.path.join(BACKUP_DIR, 'm_sys_act54side_mainpage.ab.bak')
+    if not os.path.exists(ab_bak):
         raise RuntimeError('备份不存在, 可能从未替换过: ' + BACKUP_DIR)
     shutil.copy2(ab_bak, p['ab'])
-    shutil.copy2(lst_bak, p['list'])
-    log('已还原官方原版 (Aria of the Soul)。')
-    log('注意: 若替换后游戏更新过, 建议再运行启动器「完整性检查」确保清单一致。')
+    restored = []
+    for lp in p['lists']:
+        lb = os.path.join(BACKUP_DIR, os.path.basename(lp) + '.bak')
+        if os.path.exists(lb):
+            shutil.copy2(lb, lp)
+            restored.append(os.path.basename(lp))
+    log('已还原官方原版 (Aria of the Soul)。清单还原: %s' % (', '.join(restored) or '无'))
+    log('注意: 若替换后游戏更新过, 建议在游戏内重新校验资源确保清单一致。')
 
 
 # ============ CLI ============
@@ -220,8 +254,9 @@ def _saved_game_dir():
 
 if __name__ == '__main__':
     import argparse
-    ap = argparse.ArgumentParser(description='明日方舟「扬升」主题主界面 BGM 替换工具')
-    ap.add_argument('--game', help='明日方舟 PC 客户端根目录 (含 Arknights_Data)')
+    ap = argparse.ArgumentParser(description='明日方舟「扬升」主题主界面 BGM 替换工具 (Windows PC / macOS PlayCover)')
+    ap.add_argument('--game', help='游戏目录: Windows 传 PC 客户端根目录(含 Arknights_Data); '
+                                   'macOS 传 PlayCover 的 .../Data/Documents/Bundles 目录, 留空自动检测')
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument('--apply', metavar='WAV', help='替换为指定 WAV (44.1kHz/16bit/立体声)')
     g.add_argument('--restore', action='store_true', help='还原官方原版')
