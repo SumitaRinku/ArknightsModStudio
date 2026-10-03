@@ -7,7 +7,7 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-python -X utf8 -B mod_gui.py
+python -X utf8 -B studio_gui.py
 if errorlevel 1 (
     echo.
     echo [ERROR] GUI exited with an error. See messages above.

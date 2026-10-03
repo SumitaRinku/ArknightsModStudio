@@ -1,9 +1,9 @@
 # 明日方舟 BGM 替换技术文档（Windows PC / macOS PlayCover）
 
-> 项目：将主界面「扬升」主题背景音乐（Aria of the Soul）替换为自定义曲目
+> 项目：将游戏音频（BGM/语音/音效）替换为自定义曲目，或导出为 WAV
 > 平台：Windows PC 客户端 / macOS PlayCover（iOS 客户端）· Unity 2021.3.39f1 / IL2CPP
-> 目标文件：`audio/sound_beta_2/music/act54side/m_sys_act54side_mainpage.ab`
-> 文档版本：2026-09-28（新增第 11 节 macOS PlayCover 适配）
+> 首个目标文件：`audio/sound_beta_2/music/act54side/m_sys_act54side_mainpage.ab`（现已泛化到全部音频 bundle）
+> 文档版本：2026-10-03（ArknightsModStudio 重构，新增第 12 节架构）
 
 ---
 
@@ -20,6 +20,7 @@
 9. [工具清单与使用说明](#9-工具清单)
 10. [扩展方向](#10-扩展方向)
 11. [macOS PlayCover 适配](#11-macos-playcover-适配)
+12. [ArknightsModStudio 架构（2026-10 重构）](#12-arknightsmodstudio-架构)
 
 ---
 
@@ -341,6 +342,68 @@ iOS 客户端（PlayCover 安装的国服 ipa）的目标文件**不在 .app 基
 - 音频转换可用系统自带 `afconvert` 替代 ffmpeg：`afconvert -f WAVE -d LEI16@44100 -c 2 in.mp3 out.wav`
 - 2026-09-27 实测（macOS + PlayCover，替换为 227.2s PCM 曲目）：容器往返、AudioClip 回读、
   PCM 逐字节比对（40085248 B 全等）、双清单 md5/abSize 一致性、原版备份 md5 校验全部通过
+
+---
+
+## 12. ArknightsModStudio 架构（2026-10 重构）
+
+### 12.1 模块划分
+
+| 文件 | 职责 |
+|---|---|
+| `akparse.py` | UnityFS/LZ4AK 解析（不变，第 3 节） |
+| `amslib.py` | 核心库：平台识别、清单通用同步、注册表、音频转换、FSB5 构建、多 Clip 替换、提取、浏览 |
+| `studio.py` | CLI（status/browse/apply/extract/mods/restore/reapply） |
+| `studio_gui.py` | Tkinter 三页签 GUI（BGM 快速替换 / 音频工坊 / Mod 管理） |
+
+原 `modlib.py`/`mod_gui.py` 的单目标逻辑全部泛化进 `amslib.py`；`ENTRY`/`CLIP_NAME` 常量变为参数（仅作默认值保留）。
+
+### 12.2 多 Clip bundle 的拼接替换（关键新增）
+
+语音包（如 `voice/char_002_amiya.ab`）内含数十条 AudioClip，各自独立 FSB5 **顺序拼接**在
+.resource 节点中（实测 35 条，`m_Resource.m_Offset` 逐条递增、区间互不重叠）。替换单条 Clip：
+
+1. 解析全部 Clip 的 (offset, size)，定位目标区间
+2. `new_res = res[:off] + new_fsb + res[off+old_size:]`，delta = 新旧长度差
+3. UnityPy 逐个改写：目标 Clip 的 size/时长/格式/声道；**offset > 目标区间的所有 Clip 偏移 += delta**
+4. CAB 与拼接后的 .resource 分别按原 bundle 头部参数重打包
+
+单 Clip bundle 退化为整体替换（偏移归零），与旧版行为一致。实测往返：35 条 Clip 布局完好、
+被替换 Clip 提取回读与源 PCM 逐字节一致。
+
+### 12.3 提取（无需解析 FSB5 容器头）
+
+- **PCM16（fmt=0）**：本工具构建的 FSB5 为固定 68 字节前缀 + 裸 PCM，配合 AudioClip 元数据
+  （声道/采样率）直接写 WAV，零依赖。若非本工具布局（长度对不上）则走 vgmstream
+- **Vorbis（fmt=1）**：按 `m_Resource` 区间切出完整 FSB5 字节流，交 `vgmstream-cli -o out.wav` 解码
+- vgmstream 为可选依赖：缺失时浏览/替换不受影响，仅试听/导出 Vorbis 受限
+
+### 12.4 Mod 注册表与状态机
+
+`mods.json`：`{relpath: {clip, applied_at, source_audio, official_md5, mod_md5, restored}}`，
+官方原版备份存于 `backup/files/<relpath>`（保留目录结构）。状态判定（比对当前文件 md5）：
+
+```
+cur == mod_md5      -> active     ● 生效中
+cur == official_md5 -> restored 标记?  official ○ 用户已还原 : overwritten ⚠ 更新覆盖
+其余                 -> overwritten ⚠ 更新覆盖（新版本官方文件）
+```
+
+`restored` 标记由用户主动还原时置位——用于区分「用户不要这个 Mod 了」与「游戏更新恰好发回
+同内容官方文件」两种 md5 相同的情况，前者 reapply 跳过、后者需要重应用。
+
+`reapply` 对 overwritten 条目用登记的源音频重跑管线；CAB 模板始终取自当前磁盘文件，
+游戏更新换了内部结构也能自动适配（除非 Clip 改名/布局重构，此时报错并提示等待适配）。
+
+### 12.5 其他要点
+
+- **清单同步泛化**：按 `name` 字段在所有清单中查找条目（Windows 单清单同步 totalSize；
+  iOS 双清单只动 md5/abSize，语义同 11.2 节），任一清单命中即成功
+- **自动格式转换**：非 WAV 输入经 `afconvert`（macOS 系统自带）/ `ffmpeg`（Windows）转
+  44.1kHz/16bit/立体声；声道放宽为 1/2（语音为单声道）
+- **音频补丁新增字段**：`m_Channels`/`m_Frequency` 一并改写（替换单声道语音时保持一致）
+- **浏览**：扫主清单 `audio/**.ab` 且磁盘存在者（打包进 .idx 分包的资源不可直接替换，自动排除）
+- 旧版平铺备份首次运行自动迁移至新布局并登记注册表
 
 ---
 

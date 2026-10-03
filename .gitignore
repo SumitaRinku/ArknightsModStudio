@@ -1,6 +1,8 @@
 __pycache__/
 backup/
 config.json
+mods.json
 *.pyc
 pkgs/
 .venv/
+_gui_smoke.py

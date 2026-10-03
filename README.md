@@ -1,27 +1,31 @@
-# ak-bgm-swap
+# ArknightsModStudio
 
 > **请勿分享、请勿传播。**
 > 如果你找到这个仓库，就当是捡到的宝藏，自己偷偷用、偷偷享受就好。
 > 转发到群里、贴吧、社交平台的瞬间，它离失效就不远了。
 
-明日方舟「**扬升**」主题主界面 BGM 替换工具，支持 **Windows PC 客户端** 与 **macOS PlayCover（iOS 客户端）**。
-把 `Aria of the Soul` 换成你喜欢的任意曲目，随时一键换回官方原版。
+明日方舟**音频 Mod 工作台**，支持 **Windows PC 客户端** 与 **macOS PlayCover（iOS 客户端）**。
 
-- 不改游戏程序，只替换一个音频资源包并同步校验清单
-- 图形界面操作，替换 / 还原各一键完成
-- 首次替换自动备份官方原版，随时可完整还原
+不只主界面 BGM——**任意音乐、干员语音（中/日）、音效、氛围音**都能换成你自己的音频，还能把游戏里的曲子和语音导出成 WAV 收藏。
+
+- **BGM 快速替换**：一键把「扬升」主题主界面 BGM（Aria of the Soul）换成任意歌曲
+- **音频工坊**：浏览全部 1700+ 音频资源包（按分类/关键词过滤），包内逐条列出 Clip（曲名/时长/格式），试听、导出 WAV、指哪换哪
+- **Mod 管理**：所有替换登记在册，逐个/一键还原；游戏更新覆盖后自动检测，一键重新应用
+- **自动格式转换**：MP3/FLAC/M4A 直接选用，自动转为合规格式（macOS 免安装，Windows 需 ffmpeg）
+- 不改游戏程序，只替换音频资源包并同步校验清单；首次替换自动备份官方原版
 - 本仓库**不含任何游戏资源、官方文件或音乐文件**，替换音频由使用者自备
 
 ## 环境要求
 
-- Windows + 明日方舟 PC 官方客户端，或 macOS + PlayCover 运行的明日方舟（iOS 国服客户端，均测试于 2026-09 的 V077 版本，即「扬升」主题活动版本）
+- Windows + 明日方舟 PC 官方客户端，或 macOS + PlayCover 运行的明日方舟（iOS 国服客户端，均测试于 2026-09/10 的 V077 版本）
 - Python 3.10 或更高（自带 Tkinter；macOS 用 Homebrew Python 时 tkinter 需另装 `python-tk`，见「安装」）
+- 可选：[vgmstream](https://github.com/vgmstream/vgmstream)（试听/导出 Vorbis 压缩的官方音频时需要；替换功能不需要它）
 
 ## 安装
 
 ```bash
 git clone <本仓库地址>
-cd ak-bgm-swap
+cd ArknightsModStudio
 pip install -r requirements.txt
 ```
 
@@ -31,71 +35,86 @@ pip install -r requirements.txt
 
 ```bash
 git clone <本仓库地址>
-cd ak-bgm-swap
+cd ArknightsModStudio
 brew install python-tk@3.14          # 版本号对应 brew 安装的 python3 小版本
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
+**vgmstream（可选，用于试听/导出官方 Vorbis 音频）**：
+
+- macOS：`brew install vgmstream`，或从 [GitHub Releases](https://github.com/vgmstream/vgmstream/releases) 下载 `vgmstream-mac.zip` 后把 `vgmstream-cli` 放进 PATH，或在 GUI 设置里指定路径
+- Windows：从 [Releases](https://github.com/vgmstream/vgmstream/releases) 下载 `vgmstream-win64.zip`，在 GUI 设置里指定 `vgmstream-cli.exe` 路径
+
 ## 使用方法（图形界面，推荐）
 
-1. Windows 双击 `start_gui.bat`（或运行 `python mod_gui.py`）；macOS 在仓库目录运行 `.venv/bin/python mod_gui.py`
+1. Windows 双击 `start_studio.bat`（或运行 `python studio_gui.py`）；macOS 在仓库目录运行 `.venv/bin/python studio_gui.py`
 2. 「游戏目录」一栏：
    - Windows：选择明日方舟 PC 客户端**根目录**（即包含 `Arknights_Data` 文件夹的那一层，通常是 `.../Arknights Game`）
    - macOS：**可留空**（自动检测 PlayCover 国服容器 `~/Library/Containers/com.hypergryph.arknights/Data/Documents/Bundles`），或手动选择该 `Bundles` 目录
-3. 「替换音频」一栏选择你想替换进去的 WAV 文件（格式要求见下）
-4. 点击「替换 BGM」，等待日志出现“完成!”
-5. 启动游戏，主界面切换到「扬升」主题即可听到新 BGM
 
-想换回官方原版时：打开本工具点击「还原官方原版」即可。
+界面分三个页签：
+
+**BGM 快速替换** —— 选中音频点「替换 BGM」完事；「还原官方原版」一键换回。
+
+**音频工坊** —— 替换任意音乐/语音/音效：
+1. 点「刷新资源列表」（或直接输入关键词过滤，比如 `amiya`、`act54side`）
+2. 左侧选资源包（音乐 BGM / 干员语音 / 音效…），右侧自动加载包内全部 Clip
+3. 选一条 Clip 可「试听」「导出 WAV」
+4. 底部选择你的音频，点「替换所选 Clip」（单 Clip 资源包可不选 Clip）
+
+**Mod 管理** —— 查看全部已装 Mod 与实时状态（● 生效中 / ○ 已还原 / ⚠ 被更新覆盖）：逐个或全部还原、游戏更新后一键重新应用、打开备份目录。
 
 ## 使用方法（命令行）
 
 ```bash
-# Windows
-python modlib.py --game "F:\...\Arknights Game" --apply "D:\music\某首歌.wav"
-python modlib.py --game "F:\...\Arknights Game" --restore
-python modlib.py --game "F:\...\Arknights Game" --status
+# 现状总览 / 浏览资源（支持关键词过滤）
+python studio.py --status
+python studio.py --browse amiya
 
-# macOS（--game 可省略，自动检测 PlayCover 容器）
-.venv/bin/python modlib.py --apply "…/某首歌.wav"
-.venv/bin/python modlib.py --restore
-.venv/bin/python modlib.py --status
+# 替换（wav/mp3/flac/m4a 皆可；--target/--clip 省略时默认替换扬升主界面 BGM）
+python studio.py --apply "D:\music\某首歌.mp3" --target audio/sound_beta_2/music/act54side/m_sys_act54side_shop.ab
+python studio.py --apply "语音.wav" --target audio/sound_beta_2/voice/char_002_amiya.ab --clip CN_001
+
+# 导出游戏音频为 WAV（先看包内有哪些 clip）
+python studio.py --extract audio/sound_beta_2/music/act54side/m_sys_act54side.ab
+python studio.py --extract audio/sound_beta_2/voice/char_002_amiya.ab --clip CN_017 --out ~/Downloads/amiya.wav
+
+# Mod 管理
+python studio.py --mods                # 注册表与状态
+python studio.py --restore <资源路径>  # 还原单个
+python studio.py --restore-all         # 全部还原
+python studio.py --reapply             # 游戏更新后一键重新应用被覆盖的 Mod
 ```
 
-`--game` 也可省略：图形界面选过一次游戏目录后会记住（保存在 `config.json`）；macOS 下省略时自动检测 PlayCover 默认容器路径。
+macOS 下把 `python` 换成 `.venv/bin/python`；`--game` 可省略（GUI 选过一次会记住，macOS 省略时自动检测 PlayCover 容器）。
 
 ## 音频格式要求
 
-替换文件必须是 **44100 Hz / 16 bit / 双声道（立体声）** 的 WAV。
-
-其他格式一行转换（MP3/FLAC/OGG 均可）：
-
-```bash
-# Windows（ffmpeg）
-ffmpeg -i "输入文件.mp3" -ar 44100 -sample_fmt s16 -ac 2 "输出.wav"
-
-# macOS（系统自带 afconvert，无需 ffmpeg）
-afconvert -f WAVE -d LEI16@44100 -c 2 "输入文件.mp3" "输出.wav"
-```
+替换音频无需提前转换：直接选 **WAV / MP3 / FLAC / M4A**，工具自动处理。若手动准备 WAV，规格为 **44100 Hz / 16 bit / 单声道或立体声**。
 
 时长没有限制（原版约 227 秒，你放三分钟的歌也没问题）。歌越好听，主界面越舍不得关。
+
+注意：替换进游戏的音频一律以 PCM16 存储，替换 Vorbis 压缩的资源（大多数官方音乐/语音）后该 bundle 体积会明显增大，属正常现象，游戏可正常加载。
 
 ## 常见问题
 
 **Q: 替换后游戏更新了怎么办？**
-游戏更新会重新下载资源，替换会被覆盖。更新完成后重新执行一次替换即可。
-如果更新后工具报「CAB 中未找到 AudioClip」或「bundle 结构与预期不符」，说明官方改了资源结构，等本工具适配。
+游戏更新会重新下载资源，替换会被覆盖。打开「Mod 管理」页签（或 `--mods`）会显示 ⚠ 被更新覆盖，点「重新应用被覆盖的」（或 `--reapply`）即可全部恢复——工具从当前文件取 CAB 模板，自动适配新版本结构。
+如果重应用报「bundle 中未找到 AudioClip」或「bundle 结构与预期不符」，说明官方改了资源结构，等本工具适配。
 
 **Q: 启动游戏报「资源加载异常」？**
 先运行启动器的「完整性检查」把资源恢复为官方原版（此操作会清除替换），确认游戏能正常启动后，再重新替换。
 网络状况差（代理/断网）时游戏的资源校验更容易失败，排查时注意先排除网络因素。
 
+**Q: 试听/导出提示需要 vgmstream？**
+官方音乐和语音大多是 Vorbis 压缩，解码它需要 vgmstream（见「安装」末尾）。替换功能本身不需要 vgmstream。已替换成 PCM 的资源可直接试听/导出。
+
 **Q: 还原时报「备份不存在」？**
-说明这个目录下从未执行过替换，无需还原。备份保存在工具目录的 `backup/` 文件夹里，别删。
+说明这个资源从未替换过。备份按原始路径保存在工具目录 `backup/files/` 下，别删。
 
 **Q: macOS 下提示找不到游戏资源？**
-需要先通过 PlayCover 完整进入过一次游戏（「扬升」主题的热更资源已下载），目标文件才会出现在 `.../Bundles/audio/sound_beta_2/music/act54side/`。游戏刚更新时先进一次游戏让资源下载完成，再执行替换。
+需要先通过 PlayCover 完整进入过一次游戏（对应资源已下载），文件才会出现在 `.../Bundles/audio/...`。游戏刚更新时先进一次游戏让资源下载完成，再执行替换。
 
 **Q: 会被封号吗？**
 本工具不修改程序本体、不注入进程、不联网，只替换本地音频资源文件，与修改游戏内数值/破解有本质区别。
@@ -103,14 +122,15 @@ afconvert -f WAVE -d LEI16@44100 -c 2 "输入文件.mp3" "输出.wav"
 
 ## 工作原理（简述）
 
-明日方舟的音频资源是 Unity AssetBundle（`m_sys_act54side_mainpage.ab`），内含一个指向 FSB5 音频的 `AudioClip`。本工具做的事：
+明日方舟的音频资源是 Unity AssetBundle，内含指向 FSB5 音频的 `AudioClip`（语音包等含多条，顺序拼接在 .resource 节点中）。本工具做的事：
 
 1. 解析原 bundle（自定义解析器处理 LZ4AK 变体压缩，见 `akparse.py`）
-2. 把你的 WAV 封装成 PCM16 的 FSB5，替换 bundle 内的音频资源
-3. 用 UnityPy 改写 AudioClip 元数据（时长、压缩格式、资源大小）
+2. 把你的音频封装成 PCM16 的 FSB5；多 Clip 包在原资源流中拼接替换并修正后续 Clip 偏移
+3. 用 UnityPy 改写 AudioClip 元数据（时长、压缩格式、声道、资源大小/偏移）
 4. 按原 bundle 的头部参数重新打包，并同步清单：Windows 更新 `hot_update_list.json` 的 md5/totalSize/abSize；macOS（iOS 端）条目同时登记在 `hot_update_list.json` 与 `persistent_res_list.json` 两份清单中，均只更新 md5/abSize（totalSize 为下载记账值、hash 为版本指纹，保持不动以免触发重下）
+5. 每次替换登记到 `mods.json`（含官方原版/Mod 两份 md5），据此实现状态检测、还原与更新后重应用
 
-更深入的技术细节（格式逐字段分析、FSB5 手工构建、重打包布局）见 [TECH_DOC.md](TECH_DOC.md)。
+更深入的技术细节（格式逐字段分析、FSB5 手工构建、重打包布局、macOS 适配）见 [TECH_DOC.md](TECH_DOC.md)。
 
 ## 免责声明
 
