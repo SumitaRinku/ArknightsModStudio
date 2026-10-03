@@ -354,7 +354,7 @@ iOS 客户端（PlayCover 安装的国服 ipa）的目标文件**不在 .app 基
 | `akparse.py` | UnityFS/LZ4AK 解析（不变，第 3 节） |
 | `amslib.py` | 核心库：平台识别、清单通用同步、注册表、音频转换、FSB5 构建、多 Clip 替换、提取、浏览 |
 | `studio.py` | CLI（status/browse/apply/extract/mods/restore/reapply） |
-| `studio_gui.py` | Tkinter 三页签 GUI（BGM 快速替换 / 音频工坊 / Mod 管理） |
+| `studio_gui.py` | CustomTkinter 暗色三页签 GUI（BGM 快速替换 / 音频工坊 / Mod 管理） |
 
 原 `modlib.py`/`mod_gui.py` 的单目标逻辑全部泛化进 `amslib.py`；`ENTRY`/`CLIP_NAME` 常量变为参数（仅作默认值保留）。
 
@@ -404,6 +404,18 @@ cur == official_md5 -> restored 标记?  official ○ 用户已还原 : overwrit
 - **音频补丁新增字段**：`m_Channels`/`m_Frequency` 一并改写（替换单声道语音时保持一致）
 - **浏览**：扫主清单 `audio/**.ab` 且磁盘存在者（打包进 .idx 分包的资源不可直接替换，自动排除）
 - 旧版平铺备份首次运行自动迁移至新布局并登记注册表
+
+### 12.6 GUI（CustomTkinter 重构，2026-10）
+
+- **外观**：CustomTkinter 6 暗色主题外壳（圆角卡片/CTkTabview/CTkSlider）；CTk 无树形表格组件，
+  `ttk.Treeview` 配 clam 主题深色样式补齐（`AMS.Treeview`，选中蓝 #1f6aa5、行高 30）
+- **试听播放器**（`Player` 类）：macOS 走 `afplay` 进程管理——`afplay` 无起播偏移参数，
+  **seek 以 WAV 切片实现**（从目标位置截临时 WAV 重播，播放结束/停止时清理）；Windows 等
+  其他平台回退系统播放器（`os.startfile`，无进度控制，按钮自动禁用）
+- **页签切换检测**：`CTkTabview.set()` 不触发 command 回调，GUI 在播放 tick（~100ms）里
+  轮询 `tabview.get()` 与上次值比对（对用户点击与程序切换均有效）
+- **布局坑位记录**：`CTkScrollbar` 默认请求高度 200px 会撑爆卡片（须显式给小值）；
+  窗口尺寸经 CTk 缩放，`geometry()` 直设需走 `tk.Tk.geometry` 绕过
 
 ---
 

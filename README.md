@@ -18,7 +18,7 @@
 ## 环境要求
 
 - Windows + 明日方舟 PC 官方客户端，或 macOS + PlayCover 运行的明日方舟（iOS 国服客户端，均测试于 2026-09/10 的 V077 版本）
-- Python 3.10 或更高（自带 Tkinter；macOS 用 Homebrew Python 时 tkinter 需另装 `python-tk`，见「安装」）
+- Python 3.10 或更高（自带 Tkinter；GUI 基于 [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) 暗色现代主题，随 `requirements.txt` 一并安装；macOS 用 Homebrew Python 时 tkinter 需另装 `python-tk`，见「安装」）
 - 可选：[vgmstream](https://github.com/vgmstream/vgmstream)（试听/导出 Vorbis 压缩的官方音频时需要；替换功能不需要它）
 
 ## 安装
@@ -53,14 +53,14 @@ python3 -m venv .venv
    - Windows：选择明日方舟 PC 客户端**根目录**（即包含 `Arknights_Data` 文件夹的那一层，通常是 `.../Arknights Game`）
    - macOS：**可留空**（自动检测 PlayCover 国服容器 `~/Library/Containers/com.hypergryph.arknights/Data/Documents/Bundles`），或手动选择该 `Bundles` 目录
 
-界面分三个页签：
+界面为暗色现代风格，分三个页签：
 
 **BGM 快速替换** —— 选中音频点「替换 BGM」完事；「还原官方原版」一键换回。
 
 **音频工坊** —— 替换任意音乐/语音/音效：
 1. 点「刷新资源列表」（或直接输入关键词过滤，比如 `amiya`、`act54side`）
 2. 左侧选资源包（音乐 BGM / 干员语音 / 音效…），右侧自动加载包内全部 Clip
-3. 选一条 Clip 可「试听」「导出 WAV」
+3. 选一条 Clip 可「试听」（支持拖拽进度、暂停/继续、停止）、「导出 WAV」
 4. 底部选择你的音频，点「替换所选 Clip」（单 Clip 资源包可不选 Clip）
 
 **Mod 管理** —— 查看全部已装 Mod 与实时状态（● 生效中 / ○ 已还原 / ⚠ 被更新覆盖）：逐个或全部还原、游戏更新后一键重新应用、打开备份目录。
