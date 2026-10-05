@@ -259,6 +259,7 @@ class App(ctk.CTk):
         self._build_tab1()
         self._build_tab2()
         self._build_tab3()
+        self.bind_all('<Command-f>' if IS_MAC else '<Control-f>', self._focus_filter)
 
         # ---- 日志 ----
         card, body = self._card(self, '执行日志')
@@ -322,9 +323,13 @@ class App(ctk.CTk):
         frm_top.pack(fill='x', pady=(0, 6))
         ctk.CTkLabel(frm_top, text='过滤', font=FONT_UI, text_color=COL_MUTED).pack(side='left')
         self.var_filter = tk.StringVar()
-        self.var_filter.trace_add('write', lambda *_: self.apply_filter())
-        ctk.CTkEntry(frm_top, textvariable=self.var_filter, width=260, height=32,
-                     placeholder_text='关键词, 如 amiya / act54side').pack(side='left', padx=8)
+        self._filter_after = None            # 输入防抖定时器
+        self._cat_children = {}              # 分类节点 -> 子项列表 (懒加载)
+        self._loaded_nodes = set()           # 已加载子项的分类节点
+        self.var_filter.trace_add('write', lambda *_: self._filter_changed())
+        self.ent_filter = ctk.CTkEntry(frm_top, textvariable=self.var_filter, width=260, height=32,
+                                       placeholder_text='关键词, 如 amiya / act54side (输入即筛)')
+        self.ent_filter.pack(side='left', padx=8)
         ctk.CTkButton(frm_top, text='刷新资源列表', width=110, height=32, corner_radius=8,
                       fg_color=COL_BTN_SUB, hover_color=COL_BTN_SUB_HV,
                       command=self.on_refresh_browser).pack(side='left', padx=(0, 12))
@@ -352,6 +357,7 @@ class App(ctk.CTk):
         self.tree_res.column('#0', width=400)
         self.tree_res.column('size', width=90, anchor='e')
         self.tree_res.bind('<<TreeviewSelect>>', lambda e: self.on_pick_bundle())
+        self.tree_res.bind('<<TreeviewOpen>>', lambda e: self._on_tree_open())
 
         card_r, body_r = self._card(frm_mid, '包内 AudioClip (选中资源包后自动加载)')
         card_r.grid(row=0, column=1, sticky='nsew')
@@ -565,23 +571,58 @@ class App(ctk.CTk):
         self._clip_cache.clear()
         self.apply_filter()
 
+    def _filter_changed(self):
+        """输入防抖: 停顿 250ms 再过滤, 避免逐键重建整棵树"""
+        if self._filter_after:
+            self.after_cancel(self._filter_after)
+        self._filter_after = self.after(250, self.apply_filter)
+
+    def _focus_filter(self, _event=None):
+        """⌘F / Ctrl+F: 跳到音频工坊并聚焦过滤框"""
+        self.tabview.set(self.TAB2)
+        self.ent_filter.focus_set()
+
     def apply_filter(self):
+        """构建资源列表 (1700+ 项):
+        - 无关键词: 只插入分类节点, 展开时懒加载子项 (秒开)
+        - 有关键词: 扁平结果列表 (无层级, 直接定位), 匹配路径或分类名
+        """
         kw = self.var_filter.get().strip().lower()
+        self._filter_after = None
         self.tree_res.delete(*self.tree_res.get_children(''))
         self.tree_clip.delete(*self.tree_clip.get_children(''))
+        self._cat_children.clear()
+        self._loaded_nodes.clear()
+        if kw:
+            n = 0
+            for cat, relpath, size in self._browser_rows:
+                if kw in relpath.lower() or kw in cat.lower():
+                    short = relpath.split('audio/sound_beta_2/', 1)[-1]
+                    self.tree_res.insert('', 'end', text=short, values=(fmt_size(size),),
+                                         tags=(relpath,))
+                    n += 1
+            self.var_browser_info.set('匹配 %d 个资源包 · 关键词「%s」' % (n, kw))
+            return
         cats = {}
         for cat, relpath, size in self._browser_rows:
-            if kw and kw not in relpath.lower():
-                continue
             cats.setdefault(cat, []).append((relpath, size))
         for cat, items in cats.items():
-            node = self.tree_res.insert('', 'end', text='%s (%d)' % (cat, len(items)), open=False,
-                                        values=('',))
-            for relpath, size in items:
-                short = relpath.split('audio/sound_beta_2/', 1)[-1]
-                self.tree_res.insert(node, 'end', text=short, values=(fmt_size(size),),
-                                     tags=(relpath,))
-        self.var_browser_info.set('共 %d 个资源包' % sum(len(v) for v in cats.values()))
+            node = self.tree_res.insert('', 'end', text='%s (%d)' % (cat, len(items)),
+                                        open=False, values=('',))
+            self._cat_children[node] = items
+        self.var_browser_info.set('共 %d 个资源包 · %d 个分类 (点击展开)' % (
+            sum(len(v) for v in cats.values()), len(cats)))
+
+    def _on_tree_open(self):
+        """分类节点首次展开时才插入子项"""
+        node = self.tree_res.focus()
+        if node not in self._cat_children or node in self._loaded_nodes:
+            return
+        for relpath, size in self._cat_children[node]:
+            short = relpath.split('audio/sound_beta_2/', 1)[-1]
+            self.tree_res.insert(node, 'end', text=short, values=(fmt_size(size),),
+                                 tags=(relpath,))
+        self._loaded_nodes.add(node)
 
     def on_pick_bundle(self):
         sel = self.tree_res.selection()

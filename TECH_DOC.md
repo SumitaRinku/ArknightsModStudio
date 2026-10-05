@@ -414,6 +414,10 @@ cur == official_md5 -> restored 标记?  official ○ 用户已还原 : overwrit
   其他平台回退系统播放器（`os.startfile`，无进度控制，按钮自动禁用）
 - **页签切换检测**：`CTkTabview.set()` 不触发 command 回调，GUI 在播放 tick（~100ms）里
   轮询 `tabview.get()` 与上次值比对（对用户点击与程序切换均有效）
+- **资源列表懒加载**（1700+ 项展示优化）：无关键词时只插入 7 个分类节点，
+  `<<TreeviewOpen>>` 首次展开才插入子项（重复展开不重复插入）；有关键词时切换为
+  **扁平结果列表**（无层级直接定位，同时匹配路径与分类名），输入经 250ms 防抖再重建；
+  ⌘F / Ctrl+F 全局聚焦过滤框
 - **布局坑位记录**：`CTkScrollbar` 默认请求高度 200px 会撑爆卡片（须显式给小值）；
   窗口尺寸经 CTk 缩放，`geometry()` 直设需走 `tk.Tk.geometry` 绕过
 
