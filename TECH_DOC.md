@@ -397,12 +397,13 @@ cur == official_md5 -> restored 标记?  official ○ 用户已还原 : overwrit
 
 ### 12.5 其他要点
 
-- **清单同步泛化**：按 `name` 字段在所有清单中查找条目（Windows 单清单同步 totalSize；
-  iOS 双清单只动 md5/abSize，语义同 11.2 节），任一清单命中即成功
+- **清单同步泛化**：按 `name` 字段在所有含该条目的清单中同步；每份清单携带 `sync_total`
+  语义——基础层清单（Windows StreamingAssets）同步 md5/totalSize/abSize，
+  热更层清单（Windows PersistentData、iOS 双清单）只动 md5/abSize（语义同 11.2 节）
 - **自动格式转换**：非 WAV 输入经 `afconvert`（macOS 系统自带）/ `ffmpeg`（Windows）转
   44.1kHz/16bit/立体声；声道放宽为 1/2（语音为单声道）
 - **音频补丁新增字段**：`m_Channels`/`m_Frequency` 一并改写（替换单声道语音时保持一致）
-- **浏览**：扫主清单 `audio/**.ab` 且磁盘存在者（打包进 .idx 分包的资源不可直接替换，自动排除）
+- **浏览**：合并全部清单的 `audio/**.ab` 条目且磁盘存在者（打包进 .idx 分包的资源不可直接替换，自动排除）
 - 旧版平铺备份首次运行自动迁移至新布局并登记注册表
 
 ### 12.6 GUI（CustomTkinter 重构，2026-10）
@@ -420,6 +421,37 @@ cur == official_md5 -> restored 标记?  official ○ 用户已还原 : overwrit
   ⌘F / Ctrl+F 全局聚焦过滤框
 - **布局坑位记录**：`CTkScrollbar` 默认请求高度 200px 会撑爆卡片（须显式给小值）；
   窗口尺寸经 CTk 缩放，`geometry()` 直设需走 `tk.Tk.geometry` 绕过
+
+### 12.7 Windows 双层结构适配（2026-10-09）
+
+**问题**：初版 Windows 适配只认 StreamingAssets 基础层（SA），实测发现 PC 客户端与 iOS 一样
+存在热更层 `Arknights_Data\PersistentData\Bundles`（PD），且语音包等资源**只存在于 PD 层**——
+旧实现在 Windows 上根本无法浏览/替换干员语音。
+
+**实测数据**（V078 客户端）：
+
+| 层级 | 清单 | 音频条目 | 字段语义 |
+|---|---|---|---|
+| SA 基础层 | `hot_update_list.json` | 759 | totalSize == abSize == 文件大小 |
+| PD 热更层 | `hot_update_list.json` + `persistent_res_list.json` | 2740（含 SA 全部，SA-only = 0） | totalSize 为下载记账值（≠ abSize），条目带 pid/cid/type |
+
+PD 层磁盘实际存在 1067 个音频 .ab（语音/活动音乐等按需下载）；PD 文件 md5 与 PD 清单一致，
+即 **PD 清单是 PD 层文件的权威校验源**。同一资源两层都有文件时，运行时 PD 优先（热更覆盖基础包）。
+
+**适配方案**（`resolve_game` 返回 `roots` + `lists` 两组列表）：
+
+- `roots = [PD, SA]`：`game_file()` 按序探测，热更层存在即用热更层，否则回退基础层
+- `lists` 每项带 `sync_total` 标记：SA 清单 `True`（同步 md5/totalSize/abSize），
+  PD 双清单 `False`（只动 md5/abSize，totalSize/pid/cid/hash 一律不碰）
+- 替换时**所有含该条目的清单一并同步**——对「条目登记在多份清单」的布局天然免疫
+
+**实测验证**：
+- PD 层多 Clip：`voice/char_002_amiya.ab` 替换 CN_017（35 Clip 拼接、偏移修正、双 PD 清单同步、还原逐字节恢复官方 md5）
+- SA 层：`music/act54side/m_sys_act54side_shop.ab` 替换 loop（SA 清单三字段同步 + PD 清单 md5/abSize 同步、totalSize 1138632 保持不动）
+- 复盘 2026-09「资源加载异常 错误0」：当时只同步了 SA 清单而 PD 清单残留旧 md5，现行
+  「全部命中清单都同步」策略对该类失配免疫（另注：本次实测发现 PD 清单中 act54side 主界面
+  BGM 条目长期残留热更期旧 md5 而游戏运行正常，说明该失配并非必然致命，当时故障更可能
+  与网络因素叠加有关）
 
 ---
 

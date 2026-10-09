@@ -66,35 +66,53 @@ def save_config(cfg):
 def resolve_game(base=''):
     """识别 Windows / macOS(PlayCover) 两种布局。
 
-    返回 dict(base, platform, file_root, lists, total_eq_size):
-    - Windows: base 为 PC 客户端根目录 (含 Arknights_Data), 清单 totalSize == 文件大小
-    - macOS:   base 为 Bundles 热更目录; 条目可能登记在两份清单中,
-               totalSize 为下载记账值 (恒 != 磁盘大小), 只同步 md5/abSize
+    返回 dict(base, platform, roots, lists):
+    - roots: 资源文件根目录列表, 按运行时优先级排序 (热更层在前, 基础层在后)
+    - lists: 清单列表 [{path, sync_total}]; sync_total=True 表示该清单
+             totalSize == 文件大小需一并同步; False 表示 totalSize 为下载
+             记账值 (恒 != 磁盘大小), 只同步 md5/abSize, hash 保持不动
+    - Windows: base 为 PC 客户端根目录 (含 Arknights_Data); 双层结构:
+               基础层 StreamingAssets (total_eq) +
+               热更层 PersistentData\\Bundles (hot_update_list + persistent_res_list 双清单)
+    - macOS:   base 为 Bundles 热更目录; 条目可能登记在两份清单中, 只同步 md5/abSize
     - macOS 下 base 留空时自动使用 PlayCover 默认容器路径
     """
     base = (base or '').rstrip('\\/')
     if not base and sys.platform == 'darwin':
         base = MAC_DEFAULT_BASE
     if base and os.path.isdir(os.path.join(base, 'Arknights_Data')):
-        root = os.path.join(base, 'Arknights_Data', 'StreamingAssets', 'AB', 'Windows')
-        lists = [os.path.join(root, 'hot_update_list.json')]
-        total_eq_size = True
+        sa = os.path.join(base, 'Arknights_Data', 'StreamingAssets', 'AB', 'Windows')
+        pd = os.path.join(base, 'Arknights_Data', 'PersistentData', 'Bundles')
+        roots, lists = [], []
+        if os.path.isdir(pd):                    # 热更层: 运行时优先于基础层
+            roots.append(pd)
+            for f in IOS_LISTS:                  # hot_update_list + persistent_res_list
+                lp = os.path.join(pd, f)
+                if os.path.isfile(lp):
+                    lists.append(dict(path=lp, sync_total=False))
+        roots.append(sa)                         # 基础层
+        lists.append(dict(path=os.path.join(sa, 'hot_update_list.json'), sync_total=True))
         platform = 'win'
     elif base and os.path.isfile(os.path.join(base, 'hot_update_list.json')):
-        root = base
-        lists = [os.path.join(base, f) for f in IOS_LISTS if os.path.isfile(os.path.join(base, f))]
-        total_eq_size = False
+        roots = [base]
+        lists = [dict(path=os.path.join(base, f), sync_total=False)
+                 for f in IOS_LISTS if os.path.isfile(os.path.join(base, f))]
         platform = 'ios'
     else:
         raise RuntimeError(
             '无法识别游戏目录:\n%s\n'
             'Windows: 传入 PC 客户端根目录 (含 Arknights_Data\\StreamingAssets)\n'
             'macOS:   传入 PlayCover 的 .../Data/Documents/Bundles 目录, 或留空自动检测' % (base or '(空)'))
-    return dict(base=base, platform=platform, file_root=root, lists=lists, total_eq_size=total_eq_size)
+    return dict(base=base, platform=platform, roots=roots, lists=lists)
 
 def game_file(game, relpath):
-    """清单条目名 -> 游戏内 .ab 绝对路径"""
-    return os.path.join(game['file_root'], *relpath.split('/'))
+    """清单条目名 -> 游戏内 .ab 绝对路径 (热更层优先, 未下载则回退基础层)"""
+    parts = relpath.split('/')
+    for root in game['roots']:
+        fp = os.path.join(root, *parts)
+        if os.path.isfile(fp):
+            return fp
+    return os.path.join(game['roots'][-1], *parts)
 
 def _require_ab(game, relpath):
     fp = game_file(game, relpath)
@@ -292,16 +310,17 @@ def _md5_file(path):
     return h.hexdigest()
 
 def sync_manifest_entry(game, relpath, md5, size, log=None):
-    """在所有含该条目的清单中同步 md5/abSize (Windows 另同步 totalSize)"""
+    """在所有含该条目的清单中同步 md5/abSize (sync_total 的清单另同步 totalSize)"""
     updated = []
-    for lp in game['lists']:
+    for lst in game['lists']:
+        lp = lst['path']
         j = json.load(open(lp, encoding='utf-8'))
         hit = False
         for it in j.get('abInfos', []):
             if it.get('name') == relpath:
                 it['md5'] = md5
                 it['abSize'] = size
-                if game['total_eq_size']:   # Windows: totalSize==文件大小; iOS: 保留下载记账值
+                if lst['sync_total']:   # 基础层清单: totalSize==文件大小; 热更层: 保留下载记账值
                     it['totalSize'] = size
                 hit = True
         if hit:
@@ -315,13 +334,16 @@ def sync_manifest_entry(game, relpath, md5, size, log=None):
     return updated
 
 def manifest_entries(game):
-    """主清单 (hot_update_list) 全部条目名 -> (md5, abSize)"""
-    lp = game['lists'][0]
-    j = json.load(open(lp, encoding='utf-8'))
-    return {it['name']: (it.get('md5', ''), it.get('abSize', 0)) for it in j.get('abInfos', [])}
+    """全部清单条目名 -> (md5, abSize), 多份清单合并 (去重)"""
+    out = {}
+    for lst in game['lists']:
+        j = json.load(open(lst['path'], encoding='utf-8'))
+        for it in j.get('abInfos', []):
+            out.setdefault(it['name'], (it.get('md5', ''), it.get('abSize', 0)))
+    return out
 
 def manifest_version(game):
-    lp = game['lists'][0]
+    lp = game['lists'][0]['path']
     j = json.load(open(lp, encoding='utf-8'))
     return j.get('manifestVersion', '?')
 
