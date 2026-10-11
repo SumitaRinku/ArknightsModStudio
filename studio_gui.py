@@ -7,6 +7,7 @@
 import os
 import sys
 import json
+import ctypes
 import shutil
 import threading
 import traceback
@@ -21,9 +22,19 @@ from tkinter import ttk, messagebox, filedialog
 import customtkinter as ctk
 
 IS_MAC = sys.platform == 'darwin'
-FONT_UI = ('PingFang SC', 13) if IS_MAC else ('Microsoft YaHei UI', 10)
+FONT_UI = ('PingFang SC', 13) if IS_MAC else ('Microsoft YaHei UI', 12)
 FONT_UI_BOLD = (FONT_UI[0], FONT_UI[1], 'bold')
-FONT_MONO = ('Menlo', 12) if IS_MAC else ('Consolas', 10)
+FONT_MONO = ('Menlo', 12) if IS_MAC else ('Consolas', 12)
+
+# Windows 高分屏: 启用 DPI 感知让 Tk 以物理分辨率渲染 (否则位图拉伸导致 150% 缩放下模糊)
+if sys.platform == 'win32':
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)   # PER_MONITOR_AWARE
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
 
 AUDIO_TYPES = [('音频文件', '*.wav *.mp3 *.flac *.m4a *.aiff *.aif'), ('所有文件', '*.*')]
 
@@ -57,7 +68,7 @@ def style_treeviews():
     style = ttk.Style()
     style.theme_use('clam')
     style.configure('AMS.Treeview', background=COL_CARD_DEEP, fieldbackground=COL_CARD_DEEP,
-                    foreground=COL_TREE_FG, rowheight=30, borderwidth=0, font=FONT_UI)
+                    foreground=COL_TREE_FG, rowheight=38, borderwidth=0, font=FONT_UI)
     style.configure('AMS.Treeview.Heading', background=COL_TREE_HEAD, foreground=COL_MUTED,
                     relief='flat', font=FONT_UI_BOLD, padding=(6, 5))
     style.map('AMS.Treeview', background=[('selected', COL_TREE_SEL)],
@@ -67,10 +78,11 @@ def style_treeviews():
 
 class Player:
     """试听播放控制。
-
     macOS 用 afplay 进程管理 (seek 用 WAV 切片实现), 支持进度/拖拽 seek/暂停/停止;
+    Windows 用系统自带 MCI (winmm mciSendStringW) 托管播放, 原生支持起播偏移/暂停/进度;
     其他平台回退系统播放器 (无进度控制, play() 返回 False)。
     """
+    _ALIAS = 'ams_player'
 
     def __init__(self):
         self.proc = None
@@ -81,6 +93,38 @@ class Player:
         self.paused_at = None
         self.no_control = False
         self._slice_path = None
+        self._mci_open = False
+
+    # ---------- Windows MCI ----------
+    @staticmethod
+    def _mci(cmd):
+        buf = ctypes.create_unicode_buffer(512)
+        rc = ctypes.windll.winmm.mciSendStringW(cmd, buf, 510, 0)
+        return rc, buf.value
+
+    def _mci_close(self):
+        if self._mci_open:
+            self._mci('close %s' % self._ALIAS)
+            self._mci_open = False
+
+    def _mci_play(self, offset):
+        """打开 MCI 设备并从 offset 秒播放; 失败回退系统播放器"""
+        self._mci_close()
+        rc, _ = self._mci('open "%s" type waveaudio alias %s' % (self.path, self._ALIAS))
+        if rc:
+            amslib.play_file(self.path)
+            self.no_control = True
+            return False
+        self._mci_open = True
+        ms = int(max(0.0, min(offset, max(0.0, self.duration - 0.05))) * 1000)
+        rc, _ = self._mci('play %s from %d' % (self._ALIAS, ms))
+        if rc:
+            self._mci_close()
+            amslib.play_file(self.path)
+            self.no_control = True
+            return False
+        self.start_off = offset
+        return True
 
     def _kill(self):
         if self.proc:
@@ -99,6 +143,8 @@ class Player:
             self._slice_path = None
 
     def stop(self):
+        if sys.platform == 'win32':
+            self._mci_close()
         self._kill()
         self._drop_slice()
         self.path = None
@@ -148,6 +194,8 @@ class Player:
             self.proc = subprocess.Popen(['afplay', src])
             self.t0 = time.monotonic()
             return True
+        if sys.platform == 'win32':
+            return self._mci_play(offset)
         amslib.play_file(path)
         self.no_control = True
         return False
@@ -159,6 +207,12 @@ class Player:
 
     def pause(self):
         """暂停, 返回暂停位置; 非播放状态返回 None"""
+        if sys.platform == 'win32':
+            if self.playing and self._mci('status %s mode' % self._ALIAS)[1] == 'playing':
+                self._mci('pause %s' % self._ALIAS)
+                self.paused_at = self.position()
+                return self.paused_at
+            return None
         if self.playing:
             self.paused_at = self.position()
             self._kill()
@@ -166,6 +220,13 @@ class Player:
         return None
 
     def resume(self):
+        if sys.platform == 'win32':
+            if self.path and self.paused_at is not None and not self.no_control:
+                off = self.paused_at
+                self.paused_at = None
+                rc, _ = self._mci('resume %s' % self._ALIAS)
+                return rc == 0 or self.play(self.path, off)
+            return False
         if self.path and self.paused_at is not None and not self.no_control:
             off = self.paused_at
             self.paused_at = None
@@ -174,9 +235,21 @@ class Player:
 
     @property
     def playing(self):
+        if sys.platform == 'win32':
+            if not self._mci_open:
+                return False
+            mode = self._mci('status %s mode' % self._ALIAS)[1]
+            return mode in ('playing', 'paused')
         return self.proc is not None and self.proc.poll() is None
 
     def position(self):
+        if sys.platform == 'win32':
+            if not self._mci_open:
+                return None
+            rc, pos = self._mci('status %s position' % self._ALIAS)
+            if rc == 0 and pos.strip().isdigit():
+                return min(int(pos) / 1000.0, self.duration)
+            return self.start_off
         if not self.playing:
             return None
         return min(self.start_off + (time.monotonic() - self.t0), self.duration)
