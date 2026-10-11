@@ -610,6 +610,8 @@ class App(ctk.CTk):
             node = self.tree_res.insert('', 'end', text='%s (%d)' % (cat, len(items)),
                                         open=False, values=('',))
             self._cat_children[node] = items
+            # ttk 无子节点时不显示展开箭头也不触发 <<TreeviewOpen>>, 先塞占位节点
+            self.tree_res.insert(node, 'end', text='…', tags=('__dummy__',))
         self.var_browser_info.set('共 %d 个资源包 · %d 个分类 (点击展开)' % (
             sum(len(v) for v in cats.values()), len(cats)))
 
@@ -618,6 +620,7 @@ class App(ctk.CTk):
         node = self.tree_res.focus()
         if node not in self._cat_children or node in self._loaded_nodes:
             return
+        self.tree_res.delete(*self.tree_res.get_children(node))   # 移除占位节点
         for relpath, size in self._cat_children[node]:
             short = relpath.split('audio/sound_beta_2/', 1)[-1]
             self.tree_res.insert(node, 'end', text=short, values=(fmt_size(size),),
@@ -629,7 +632,7 @@ class App(ctk.CTk):
         if not sel:
             return
         tags = self.tree_res.item(sel[0], 'tags')
-        if not tags:                     # 分类节点
+        if not tags or tags[0] == '__dummy__':   # 分类节点 / 占位节点
             return
         relpath = tags[0]
 
