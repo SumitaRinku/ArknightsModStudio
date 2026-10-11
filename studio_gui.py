@@ -324,8 +324,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(frm_top, text='过滤', font=FONT_UI, text_color=COL_MUTED).pack(side='left')
         self.var_filter = tk.StringVar()
         self._filter_after = None            # 输入防抖定时器
-        self._cat_children = {}              # 分类节点 -> 子项列表 (懒加载)
-        self._loaded_nodes = set()           # 已加载子项的分类节点
+        self._nav_prefix = ''              # 当前导航目录 (清单路径前缀, '' = 根)
         self.var_filter.trace_add('write', lambda *_: self._filter_changed())
         self.ent_filter = ctk.CTkEntry(frm_top, textvariable=self.var_filter, width=260, height=32,
                                        placeholder_text='关键词, 如 amiya / act54side (输入即筛)')
@@ -344,20 +343,23 @@ class App(ctk.CTk):
         frm_mid.grid_columnconfigure(1, weight=6)
         frm_mid.grid_rowconfigure(0, weight=1)
 
-        card_l, body_l = self._card(frm_mid, '资源包 (按分类)')
+        card_l, body_l = self._card(frm_mid, '资源浏览 (双击目录进入, 面包屑跳级)')
         card_l.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+        self.frm_crumb = ctk.CTkFrame(body_l, fg_color='transparent', height=28)
+        self.frm_crumb.pack(fill='x', pady=(0, 6))
         sb1 = ctk.CTkScrollbar(body_l, height=60, command=None, button_color='#4a4a4a')
-        self.tree_res = ttk.Treeview(body_l, style='AMS.Treeview', columns=('size',),
-                                     show='tree headings', height=2, yscrollcommand=sb1.set)
+        self.tree_res = ttk.Treeview(body_l, style='AMS.Treeview', columns=('name', 'size'),
+                                     show='headings', height=2, yscrollcommand=sb1.set)
         sb1.configure(command=self.tree_res.yview)
         self.tree_res.pack(side='left', fill='both', expand=True)
         sb1.pack(side='right', fill='y', padx=(6, 0))
-        self.tree_res.heading('#0', text='分类 / 资源')
+        self.tree_res.heading('name', text='名称')
         self.tree_res.heading('size', text='大小')
-        self.tree_res.column('#0', width=400)
+        self.tree_res.column('name', width=400)
         self.tree_res.column('size', width=90, anchor='e')
+        self.tree_res.tag_configure('dir', foreground='#7ab8f5')
         self.tree_res.bind('<<TreeviewSelect>>', lambda e: self.on_pick_bundle())
-        self.tree_res.bind('<<TreeviewOpen>>', lambda e: self._on_tree_open())
+        self.tree_res.bind('<Double-Button-1>', lambda e: self._on_nav_double())
 
         card_r, body_r = self._card(frm_mid, '包内 AudioClip (选中资源包后自动加载)')
         card_r.grid(row=0, column=1, sticky='nsew')
@@ -431,6 +433,7 @@ class App(ctk.CTk):
 
         self._browser_rows = []            # browse_audio 结果缓存
         self._clip_cache = {}              # relpath -> clips
+        self._nav_prefix = ''              # 当前导航目录 (清单路径前缀, '' = 根)
 
     # ---------- Tab 3: Mod 管理 ----------
     def _build_tab3(self):
@@ -569,6 +572,7 @@ class App(ctk.CTk):
     def _fill_browser(self, rows):
         self._browser_rows = rows
         self._clip_cache.clear()
+        self._nav_prefix = ''
         self.apply_filter()
 
     def _filter_changed(self):
@@ -583,58 +587,102 @@ class App(ctk.CTk):
         self.ent_filter.focus_set()
 
     def apply_filter(self):
-        """构建资源列表 (1700+ 项):
-        - 无关键词: 只插入分类节点, 展开时懒加载子项 (秒开)
+        """构建资源列表 (1800+ 项):
+        - 无关键词: 文件管理器式分层导航 (面包屑 + 单层列表, 双击进目录, 每层秒渲)
         - 有关键词: 扁平结果列表 (无层级, 直接定位), 匹配路径或分类名
         """
         kw = self.var_filter.get().strip().lower()
         self._filter_after = None
         self.tree_res.delete(*self.tree_res.get_children(''))
         self.tree_clip.delete(*self.tree_clip.get_children(''))
-        self._cat_children.clear()
-        self._loaded_nodes.clear()
         if kw:
+            self._render_crumb(search=True)
             n = 0
             for cat, relpath, size in self._browser_rows:
                 if kw in relpath.lower() or kw in cat.lower():
                     short = relpath.split('audio/sound_beta_2/', 1)[-1]
-                    self.tree_res.insert('', 'end', text=short, values=(fmt_size(size),),
-                                         tags=(relpath,))
+                    self.tree_res.insert('', 'end', values=(short, fmt_size(size)),
+                                         tags=('file', relpath))
                     n += 1
             self.var_browser_info.set('匹配 %d 个资源包 · 关键词「%s」' % (n, kw))
             return
-        cats = {}
-        for cat, relpath, size in self._browser_rows:
-            cats.setdefault(cat, []).append((relpath, size))
-        for cat, items in cats.items():
-            node = self.tree_res.insert('', 'end', text='%s (%d)' % (cat, len(items)),
-                                        open=False, values=('',))
-            self._cat_children[node] = items
-            # ttk 无子节点时不显示展开箭头也不触发 <<TreeviewOpen>>, 先塞占位节点
-            self.tree_res.insert(node, 'end', text='…', tags=('__dummy__',))
-        self.var_browser_info.set('共 %d 个资源包 · %d 个分类 (点击展开)' % (
-            sum(len(v) for v in cats.values()), len(cats)))
+        self._render_level()
 
-    def _on_tree_open(self):
-        """分类节点首次展开时才插入子项"""
-        node = self.tree_res.focus()
-        if node not in self._cat_children or node in self._loaded_nodes:
+    def _level_items(self, prefix):
+        """当前导航层内容: [(子目录名, 数量, 总大小)] + [(文件名, relpath, size)]"""
+        dirs, files = {}, []
+        pre = prefix + '/' if prefix else ''
+        for _cat, relpath, size in self._browser_rows:
+            if not relpath.startswith(pre):
+                continue
+            rest = relpath[len(pre):]
+            if '/' in rest:
+                d = rest.split('/', 1)[0]
+                cnt, sz = dirs.get(d, (0, 0))
+                dirs[d] = (cnt + 1, sz + size)
+            else:
+                files.append((rest, relpath, size))
+        return sorted((d, cnt, sz) for d, (cnt, sz) in dirs.items()), sorted(files)
+
+    def _render_level(self):
+        # 根层若是单目录长链 (audio -> sound_beta_2) 自动下钻, 去掉无效层级
+        while not self._level_items(self._nav_prefix)[1]:
+            dirs = self._level_items(self._nav_prefix)[0]
+            if len(dirs) != 1:
+                break
+            self._nav_prefix = '%s/%s' % (self._nav_prefix, dirs[0][0]) if self._nav_prefix \
+                else dirs[0][0]
+        dirs, files = self._level_items(self._nav_prefix)
+        for d, cnt, sz in dirs:
+            full = '%s/%s' % (self._nav_prefix, d) if self._nav_prefix else d
+            self.tree_res.insert('', 'end', values=('%s/    %d 项' % (d, cnt), fmt_size(sz)),
+                                 tags=('dir', full))
+        for fname, relpath, size in files:
+            self.tree_res.insert('', 'end', values=(fname, fmt_size(size)),
+                                 tags=('file', relpath))
+        self._render_crumb()
+        total = sum(s for _, _, s in dirs) + sum(s for _, _, s in files)
+        self.var_browser_info.set('%d 目录 · %d 文件 · 共 %s' % (len(dirs), len(files), fmt_size(total)))
+
+    def _render_crumb(self, search=False):
+        for w in self.frm_crumb.winfo_children():
+            w.destroy()
+        if search:
+            ctk.CTkLabel(self.frm_crumb, text='搜索结果 (清空关键词返回目录导航)',
+                         font=FONT_UI, text_color=COL_TREE_SEL).pack(side='left')
             return
-        self.tree_res.delete(*self.tree_res.get_children(node))   # 移除占位节点
-        for relpath, size in self._cat_children[node]:
-            short = relpath.split('audio/sound_beta_2/', 1)[-1]
-            self.tree_res.insert(node, 'end', text=short, values=(fmt_size(size),),
-                                 tags=(relpath,))
-        self._loaded_nodes.add(node)
+        ctk.CTkButton(self.frm_crumb, text='全部', width=48, height=24, corner_radius=6,
+                      fg_color=COL_BTN_SUB, hover_color=COL_BTN_SUB_HV, font=FONT_UI,
+                      command=lambda: self._nav_to('')).pack(side='left')
+        acc = ''
+        for s in (self._nav_prefix.split('/') if self._nav_prefix else []):
+            acc = '%s/%s' % (acc, s) if acc else s
+            ctk.CTkLabel(self.frm_crumb, text='›', font=FONT_UI,
+                         text_color=COL_MUTED).pack(side='left', padx=3)
+            ctk.CTkButton(self.frm_crumb, text=s, width=max(44, 13 * len(s) + 18), height=24,
+                          corner_radius=6, fg_color=COL_BTN_SUB, hover_color=COL_BTN_SUB_HV,
+                          font=FONT_UI, command=lambda p=acc: self._nav_to(p)).pack(side='left')
+
+    def _nav_to(self, prefix):
+        self._nav_prefix = prefix
+        self.apply_filter()
+
+    def _on_nav_double(self):
+        sel = self.tree_res.selection()
+        if not sel:
+            return
+        tags = self.tree_res.item(sel[0], 'tags')
+        if tags and tags[0] == 'dir':
+            self._nav_to(tags[1])
 
     def on_pick_bundle(self):
         sel = self.tree_res.selection()
         if not sel:
             return
         tags = self.tree_res.item(sel[0], 'tags')
-        if not tags or tags[0] == '__dummy__':   # 分类节点 / 占位节点
+        if not tags or tags[0] != 'file':      # 目录节点
             return
-        relpath = tags[0]
+        relpath = tags[1]
 
         def load():
             try:
@@ -651,7 +699,7 @@ class App(ctk.CTk):
         if not self.tree_res.selection():
             return
         cur = self.tree_res.item(self.tree_res.selection()[0], 'tags')
-        if not cur or cur[0] != relpath:
+        if not cur or len(cur) < 2 or cur[1] != relpath:
             return
         self.tree_clip.delete(*self.tree_clip.get_children(''))
         for c in self._clip_cache.get(relpath, []):
@@ -669,9 +717,9 @@ class App(ctk.CTk):
         if not sel:
             return None
         tags = self.tree_res.item(sel[0], 'tags')
-        if not tags:
+        if not tags or len(tags) < 2 or tags[0] != 'file':
             return None
-        relpath = tags[0]
+        relpath = tags[1]
         csel = self.tree_clip.selection()
         if csel:
             return relpath, self.tree_clip.item(csel[0], 'values')[0]
